@@ -12,12 +12,13 @@ model Company {
   name       String
   rnc        String?
   createdAt  DateTime          @default(now())
-  users      User[]
-  employees  Employee[]
-  devices    Device[]
-  contracts  Contract[]
-  structures SalaryStructure[]
+  users       User[]
+  employees   Employee[]
+  devices     Device[]
+  contracts   Contract[]
+  structures  SalaryStructure[]
   payslipRuns PayslipRun[]
+  novelties   Novelty[]
 }
 
 model User {
@@ -49,9 +50,31 @@ model Employee {
   events       AttendanceEvent[]
   hikUsers     HikvisionUser[]
   payslips     Payslip[]
+  novelties    Novelty[]
 
   @@unique([companyId, code])
   @@index([biometricPin])
+}
+
+/** Cuaderno de novedades: faltas, licencias, permisos, notas */
+model Novelty {
+  id             String    @id @default(cuid())
+  companyId      String
+  company        Company   @relation(fields: [companyId], references: [id])
+  employeeId     String
+  employee       Employee  @relation(fields: [employeeId], references: [id])
+  type           String
+  dateFrom       DateTime  @db.Date
+  dateTo         DateTime? @db.Date
+  days           Decimal   @default(1) @db.Decimal(6, 2)
+  reason         String?
+  status         String    @default("approved")
+  affectsPayroll Boolean   @default(true)
+  paid           Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+
+  @@index([companyId, dateFrom])
+  @@index([employeeId, dateFrom])
 }
 
 model Device {

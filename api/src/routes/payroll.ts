@@ -133,18 +133,39 @@ payrollRouter.get('/payslips', async (req, res) => {
 
 payrollRouter.get('/dashboard', async (req, res) => {
   const companyId = req.user!.companyId;
-  const [employees, devices, eventsToday, runs, slips] = await Promise.all([
-    prisma.employee.count({ where: { companyId, active: true } }),
-    prisma.device.count({ where: { companyId, isActive: true } }),
-    prisma.attendanceEvent.count({
-      where: {
-        companyId,
-        isValidAttendance: true,
-        eventAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
-      },
-    }),
-    prisma.payslipRun.count({ where: { companyId } }),
-    prisma.payslip.count({ where: { employee: { companyId } } }),
-  ]);
-  res.json({ employees, devices, eventsToday, runs, slips });
+  const startOfDay = new Date(new Date().setHours(0, 0, 0, 0));
+  const [employees, devices, eventsToday, runs, slips, noveltiesOpen, recentEvents, recentNovelties] =
+    await Promise.all([
+      prisma.employee.count({ where: { companyId, active: true } }),
+      prisma.device.count({ where: { companyId, isActive: true } }),
+      prisma.attendanceEvent.count({
+        where: { companyId, isValidAttendance: true, eventAt: { gte: startOfDay } },
+      }),
+      prisma.payslipRun.count({ where: { companyId } }),
+      prisma.payslip.count({ where: { employee: { companyId } } }),
+      prisma.novelty.count({
+        where: { companyId, status: 'approved', dateFrom: { gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1) } },
+      }),
+      prisma.attendanceEvent.findMany({
+        where: { companyId },
+        orderBy: { eventAt: 'desc' },
+        take: 8,
+      }),
+      prisma.novelty.findMany({
+        where: { companyId },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+        include: { employee: { select: { name: true, code: true } } },
+      }),
+    ]);
+  res.json({
+    employees,
+    devices,
+    eventsToday,
+    runs,
+    slips,
+    noveltiesOpen,
+    recentEvents,
+    recentNovelties,
+  });
 });

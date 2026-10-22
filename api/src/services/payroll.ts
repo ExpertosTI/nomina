@@ -108,6 +108,33 @@ export async function computePayslip(opts: {
     });
   }
 
+  const novelties = await prisma.novelty.findMany({
+    where: {
+      companyId: opts.companyId,
+      employeeId: opts.employeeId,
+      status: 'approved',
+      affectsPayroll: true,
+      dateFrom: { lte: opts.dateTo },
+      OR: [{ dateTo: null }, { dateTo: { gte: opts.dateFrom } }],
+    },
+  });
+
+  const daily = basic / 30;
+  let unpaidDays = 0;
+  for (const nov of novelties) {
+    if (nov.paid) continue;
+    const days = n(nov.days);
+    unpaidDays += days;
+    const amount = Math.round(days * daily * 100) / 100;
+    if (amount <= 0) continue;
+    lines.push({
+      code: `NOV_${nov.type.toUpperCase()}_${nov.id.slice(-4)}`,
+      name: `${nov.type}: ${nov.reason || `${days} día(s)`}`,
+      category: 'deduction',
+      amount,
+    });
+  }
+
   const debts = await prisma.employeeDebt.findMany({
     where: { employeeId: opts.employeeId, active: true, remaining: { gt: 0 } },
   });
@@ -140,7 +167,7 @@ export async function computePayslip(opts: {
       dateFrom: opts.dateFrom,
       dateTo: opts.dateTo,
       state: 'draft',
-      workedDays: stats.workedDays,
+      workedDays: Math.max(0, stats.workedDays - Math.round(unpaidDays)),
       overtimeHours: stats.overtimeHours,
       basicWage: basic,
       gross,
