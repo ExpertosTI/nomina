@@ -5,11 +5,28 @@ async function main() {
   const companyName = process.env.COMPANY_NAME || 'Renace Tech';
   const email = (process.env.ADMIN_EMAIL || 'info@renace.tech').toLowerCase();
   const password = process.env.ADMIN_PASSWORD || 'RenaceNomina2026!';
+  const slugBase = companyName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 40) || 'renace';
 
-  let company = await prisma.company.findFirst({ where: { name: companyName } });
+  let company = await prisma.company.findFirst({
+    where: { OR: [{ name: companyName }, { slug: slugBase }] },
+  });
   if (!company) {
     company = await prisma.company.create({
-      data: { name: companyName, rnc: '132842316' },
+      data: {
+        name: companyName,
+        slug: slugBase,
+        rnc: '132842316',
+        smtpFromName: `Nomina · ${companyName}`,
+      },
+    });
+  } else if (!company.slug) {
+    company = await prisma.company.update({
+      where: { id: company.id },
+      data: { slug: slugBase },
     });
   }
 
@@ -37,22 +54,8 @@ async function main() {
         code: 'STD',
         rules: {
           create: [
-            {
-              name: 'AFP (empleado)',
-              code: 'AFP',
-              sequence: 20,
-              category: 'deduction',
-              amountType: 'percent',
-              amount: 2.87,
-            },
-            {
-              name: 'SFS (empleado)',
-              code: 'SFS',
-              sequence: 30,
-              category: 'deduction',
-              amountType: 'percent',
-              amount: 3.04,
-            },
+            { name: 'AFP (empleado)', code: 'AFP', sequence: 20, category: 'deduction', amountType: 'percent', amount: 2.87 },
+            { name: 'SFS (empleado)', code: 'SFS', sequence: 30, category: 'deduction', amountType: 'percent', amount: 3.04 },
           ],
         },
       },
@@ -63,6 +66,7 @@ async function main() {
     JSON.stringify(
       {
         company: company.name,
+        slug: company.slug,
         admin: email,
         structure: structure.code,
         login: `${process.env.PUBLIC_SITE_URL || 'https://nomina.renace.tech'}/login`,

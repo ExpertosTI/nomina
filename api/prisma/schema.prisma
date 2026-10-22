@@ -8,24 +8,34 @@ datasource db {
 }
 
 model Company {
-  id         String            @id @default(cuid())
-  name       String
-  rnc        String?
-  createdAt  DateTime          @default(now())
-  users       User[]
-  employees   Employee[]
-  devices     Device[]
-  contracts   Contract[]
-  structures  SalaryStructure[]
-  payslipRuns PayslipRun[]
-  novelties   Novelty[]
+  id                 String            @id @default(cuid())
+  name               String
+  slug               String            @unique
+  rnc                String?
+  smtpHost           String?
+  smtpPort           Int?              @default(465)
+  smtpUser           String?
+  smtpPass           String?
+  smtpFromName       String?
+  evolutionInstance  String?
+  evolutionToken     String?
+  whatsappStatus     String            @default("disconnected")
+  createdAt          DateTime          @default(now())
+  users              User[]
+  employees          Employee[]
+  devices            Device[]
+  contracts          Contract[]
+  structures         SalaryStructure[]
+  payslipRuns        PayslipRun[]
+  novelties          Novelty[]
 }
 
 model User {
   id           String   @id @default(cuid())
   email        String   @unique
   name         String
-  passwordHash String
+  passwordHash String?
+  googleId     String?  @unique
   role         String   @default("hr")
   companyId    String
   company      Company  @relation(fields: [companyId], references: [id])

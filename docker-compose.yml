@@ -48,6 +48,15 @@ services:
       LISTENER_FORWARD_SECRET: ${LISTENER_FORWARD_SECRET}
       TZ: ${TZ:-America/Santo_Domingo}
       RUN_SEED: "1"
+      SMTP_HOST: ${SMTP_HOST:-smtp.hostinger.com}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USER: ${SMTP_USER:-info@renace.tech}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Nomina RENACE}
+      EVOLUTION_API_URL: ${EVOLUTION_API_URL:-https://evoapi.renace.tech}
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     networks:
       - RenaceNet
     depends_on:

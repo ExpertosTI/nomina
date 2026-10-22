@@ -92,11 +92,61 @@ function useAuth() {
   return { user, setUser, loading };
 }
 
+declare global {
+  interface Window {
+    google?: {
+      accounts: {
+        id: {
+          initialize: (cfg: Record<string, unknown>) => void;
+          renderButton: (el: HTMLElement, cfg: Record<string, unknown>) => void;
+        };
+      };
+    };
+  }
+}
+
 function Login({ onLogin }: { onLogin: (u: User) => void }) {
   const [email, setEmail] = useState('info@renace.tech');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [googleClientId, setGoogleClientId] = useState('');
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    api<{ google: boolean; googleClientId: string }>('/api/auth/providers')
+      .then((p) => setGoogleClientId(p.googleClientId || ''))
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (!googleClientId) return;
+    const t = window.setInterval(() => {
+      if (!window.google?.accounts?.id) return;
+      window.clearInterval(t);
+      window.google.accounts.id.initialize({
+        client_id: googleClientId,
+        callback: async (resp: { credential: string }) => {
+          try {
+            const d = await api<{ token: string; user: User }>('/api/auth/google', {
+              method: 'POST',
+              body: JSON.stringify({ idToken: resp.credential }),
+            });
+            setToken(d.token);
+            onLogin(d.user);
+          } catch (err) {
+            setError(err instanceof Error ? err.message : 'Google falló');
+          }
+        },
+      });
+      const el = document.getElementById('google-btn');
+      if (el) {
+        el.innerHTML = '';
+        window.google.accounts.id.renderButton(el, { theme: 'outline', size: 'large', width: 320 });
+      }
+    }, 200);
+    return () => window.clearInterval(t);
+  }, [googleClientId, onLogin]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -122,7 +172,7 @@ function Login({ onLogin }: { onLogin: (u: User) => void }) {
         <h1>
           Nomina <span>RENACE</span>
         </h1>
-        <p className="lead">Asistencia Hikvision · contratos · lotes de nómina</p>
+        <p className="lead">Multi-tenant · asistencia · WhatsApp · reportes</p>
         <div className="field">
           <label>Email</label>
           <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required />
@@ -134,6 +184,83 @@ function Login({ onLogin }: { onLogin: (u: User) => void }) {
         {error && <p className="error">{error}</p>}
         <button className="btn primary" disabled={busy} style={{ width: '100%' }}>
           {busy ? 'Entrando…' : 'Entrar'}
+        </button>
+        {googleClientId && (
+          <div id="google-btn" style={{ marginTop: '0.85rem', display: 'grid', placeItems: 'center' }} />
+        )}
+        <p className="lead" style={{ marginTop: '1rem', marginBottom: 0 }}>
+          ¿Empresa nueva?{' '}
+          <button type="button" className="btn" onClick={() => navigate('/registro')}>
+            Registrar tenant
+          </button>
+        </p>
+      </form>
+    </div>
+  );
+}
+
+function Registro({ onLogin }: { onLogin: (u: User) => void }) {
+  const [form, setForm] = useState({
+    companyName: '',
+    rnc: '',
+    name: '',
+    email: '',
+    password: '',
+  });
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const navigate = useNavigate();
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const d = await api<{ token: string; user: User }>('/api/auth/register', {
+        method: 'POST',
+        body: JSON.stringify(form),
+      });
+      setToken(d.token);
+      onLogin(d.user);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="login-wrap">
+      <form className="login-card" onSubmit={submit}>
+        <h1>
+          Nueva <span>empresa</span>
+        </h1>
+        <p className="lead">Crea tu instancia (tenant) con estructura salarial RD.</p>
+        {(
+          [
+            ['companyName', 'Nombre empresa'],
+            ['rnc', 'RNC (opcional)'],
+            ['name', 'Tu nombre'],
+            ['email', 'Email admin'],
+            ['password', 'Contraseña'],
+          ] as const
+        ).map(([k, label]) => (
+          <div className="field" key={k}>
+            <label>{label}</label>
+            <input
+              value={form[k]}
+              onChange={(e) => setForm({ ...form, [k]: e.target.value })}
+              type={k === 'password' ? 'password' : k === 'email' ? 'email' : 'text'}
+              required={k !== 'rnc'}
+            />
+          </div>
+        ))}
+        {error && <p className="error">{error}</p>}
+        <button className="btn primary" disabled={busy} style={{ width: '100%' }}>
+          {busy ? 'Creando…' : 'Crear cuenta'}
+        </button>
+        <button type="button" className="btn" style={{ width: '100%', marginTop: 8 }} onClick={() => navigate('/')}>
+          Volver al login
         </button>
       </form>
     </div>
@@ -156,8 +283,10 @@ function Shell({
     ['/empleados', 'Empleados'],
     ['/contratos', 'Contratos'],
     ['/lotes', 'Lotes de nómina'],
+    ['/reportes', 'Reportes'],
     ['/cuaderno', 'Cuaderno'],
     ['/terminales', 'Terminales'],
+    ['/ajustes', 'Ajustes'],
   ] as const;
 
   return (
@@ -1089,20 +1218,360 @@ function Terminales() {
   );
 }
 
+function Reportes() {
+  const [from, setFrom] = useState(() => {
+    const d = new Date();
+    d.setDate(1);
+    return d.toISOString().slice(0, 10);
+  });
+  const [to, setTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [att, setAtt] = useState<Record<string, unknown> | null>(null);
+  const [runs, setRuns] = useState<Run[]>([]);
+  const [runId, setRunId] = useState('');
+  const [pay, setPay] = useState<Record<string, unknown> | null>(null);
+  const [msg, setMsg] = useState('');
+
+  useEffect(() => {
+    api<Run[]>('/api/payroll/runs').then(setRuns).catch(console.error);
+  }, []);
+
+  async function loadAtt() {
+    setAtt(await api(`/api/reports/attendance?from=${from}&to=${to}`));
+  }
+
+  async function loadPay() {
+    if (!runId) return;
+    setPay(await api(`/api/reports/payroll/${runId}`));
+  }
+
+  async function emailPay() {
+    if (!runId) return;
+    await api(`/api/reports/payroll/${runId}/email`, { method: 'POST', body: '{}' });
+    setMsg('Reporte enviado por correo');
+  }
+
+  return (
+    <>
+      <h1 className="page-title">Reportes</h1>
+      <p className="lead">Asistencia por periodo y resumen de lotes (exportables por correo/WhatsApp).</p>
+
+      <section className="panel">
+        <div className="panel-head">
+          <h2>Asistencia</h2>
+        </div>
+        <div className="composer">
+          <div className="row-actions">
+            <div className="field">
+              <label>Desde</label>
+              <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+            </div>
+            <div className="field">
+              <label>Hasta</label>
+              <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+            </div>
+            <button className="btn primary" type="button" onClick={loadAtt}>
+              Generar
+            </button>
+          </div>
+          {att && (
+            <>
+              <div className="metrics">
+                <div className="metric">
+                  <div className="label">Eventos</div>
+                  <div className="value">{(att.totals as { events: number }).events}</div>
+                </div>
+                <div className="metric">
+                  <div className="label">Válidos</div>
+                  <div className="value">{(att.totals as { valid: number }).valid}</div>
+                </div>
+                <div className="metric">
+                  <div className="label">Empleados</div>
+                  <div className="value">{(att.totals as { employees: number }).employees}</div>
+                </div>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Código</th>
+                    <th>Nombre</th>
+                    <th>Días</th>
+                    <th>Válidos</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {((att.employees as Array<Record<string, unknown>>) || []).map((e) => (
+                    <tr key={String(e.code)}>
+                      <td>{String(e.code)}</td>
+                      <td>{String(e.name)}</td>
+                      <td>{String(e.workedDays)}</td>
+                      <td>{String(e.valid)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <h2>Nómina por lote</h2>
+        </div>
+        <div className="composer">
+          <div className="row-actions">
+            <div className="field">
+              <label>Lote</label>
+              <select value={runId} onChange={(e) => setRunId(e.target.value)}>
+                <option value="">Seleccionar…</option>
+                {runs.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button className="btn primary" type="button" onClick={loadPay}>
+              Ver reporte
+            </button>
+            <button className="btn" type="button" onClick={emailPay} disabled={!runId}>
+              Enviar por correo
+            </button>
+          </div>
+          {msg && <p className="lead">{msg}</p>}
+          {pay && (
+            <>
+              <div className="metrics">
+                <div className="metric">
+                  <div className="label">Payslips</div>
+                  <div className="value">{(pay.totals as { count: number }).count}</div>
+                </div>
+                <div className="metric">
+                  <div className="label">Bruto</div>
+                  <div className="value" style={{ fontSize: '1.1rem' }}>
+                    {money((pay.totals as { gross: number }).gross)}
+                  </div>
+                </div>
+                <div className="metric">
+                  <div className="label">Neto</div>
+                  <div className="value" style={{ fontSize: '1.1rem' }}>
+                    {money((pay.totals as { net: number }).net)}
+                  </div>
+                </div>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Empleado</th>
+                    <th>Días</th>
+                    <th>Bruto</th>
+                    <th>Deducciones</th>
+                    <th>Neto</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {((pay.payslips as Array<Record<string, unknown>>) || []).map((p) => (
+                    <tr key={String(p.id)}>
+                      <td>{String(p.employee)}</td>
+                      <td>{String(p.workedDays)}</td>
+                      <td>{money(p.gross as number)}</td>
+                      <td>{money(p.deductions as number)}</td>
+                      <td>
+                        <strong>{money(p.net as number)}</strong>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+        </div>
+      </section>
+    </>
+  );
+}
+
+function Ajustes() {
+  const [s, setS] = useState<Record<string, unknown> | null>(null);
+  const [form, setForm] = useState({
+    name: '',
+    rnc: '',
+    smtpHost: '',
+    smtpPort: '465',
+    smtpUser: '',
+    smtpPass: '',
+    smtpFromName: '',
+  });
+  const [qr, setQr] = useState('');
+  const [waState, setWaState] = useState('');
+  const [msg, setMsg] = useState('');
+  const [phone, setPhone] = useState('');
+
+  const load = () =>
+    api<Record<string, unknown>>('/api/settings').then((d) => {
+      setS(d);
+      setForm({
+        name: String(d.name || ''),
+        rnc: String(d.rnc || ''),
+        smtpHost: String(d.smtpHost || ''),
+        smtpPort: String(d.smtpPort || 465),
+        smtpUser: String(d.smtpUser || ''),
+        smtpPass: '',
+        smtpFromName: String(d.smtpFromName || ''),
+      });
+      setWaState(String(d.whatsappStatus || ''));
+    });
+
+  useEffect(() => {
+    load().catch(console.error);
+  }, []);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    await api('/api/settings', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        ...form,
+        smtpPort: Number(form.smtpPort),
+        smtpPass: form.smtpPass || undefined,
+      }),
+    });
+    setMsg('Ajustes guardados');
+    load();
+  }
+
+  async function testMail() {
+    await api('/api/settings/mail/test', { method: 'POST', body: '{}' });
+    setMsg('Correo de prueba enviado');
+  }
+
+  async function connectWa() {
+    setMsg('Generando QR WhatsApp…');
+    const d = await api<{ qrBase64?: string; state: string; instance: string }>('/api/settings/whatsapp/connect', {
+      method: 'POST',
+      body: '{}',
+    });
+    setQr(d.qrBase64 || '');
+    setWaState(d.state);
+    setMsg(`Instancia ${d.instance} · estado ${d.state}`);
+  }
+
+  async function refreshWa() {
+    const d = await api<{ state: string }>('/api/settings/whatsapp/status');
+    setWaState(d.state);
+  }
+
+  async function testWa() {
+    await api('/api/settings/whatsapp/test', { method: 'POST', body: JSON.stringify({ phone }) });
+    setMsg('Mensaje de prueba enviado');
+  }
+
+  return (
+    <>
+      <h1 className="page-title">Ajustes del tenant</h1>
+      <p className="lead">
+        Instancia <strong>{String(s?.slug || '…')}</strong> · correo SMTP · WhatsApp Evolution
+      </p>
+      {msg && <p className="lead">{msg}</p>}
+
+      <section className="panel">
+        <div className="panel-head">
+          <h2>Empresa y correo</h2>
+        </div>
+        <form className="composer" onSubmit={save}>
+          <div className="row-actions">
+            {(
+              [
+                ['name', 'Nombre'],
+                ['rnc', 'RNC'],
+                ['smtpFromName', 'Remitente'],
+                ['smtpHost', 'SMTP host'],
+                ['smtpPort', 'Puerto'],
+                ['smtpUser', 'Usuario SMTP'],
+                ['smtpPass', 'Password SMTP'],
+              ] as const
+            ).map(([k, label]) => (
+              <div className="field" key={k}>
+                <label>{label}</label>
+                <input
+                  value={form[k]}
+                  onChange={(e) => setForm({ ...form, [k]: e.target.value })}
+                  type={k === 'smtpPass' ? 'password' : 'text'}
+                  placeholder={k === 'smtpPass' && s?.hasSmtpPass ? '•••••••• (sin cambio)' : ''}
+                />
+              </div>
+            ))}
+          </div>
+          <div className="quick-actions">
+            <button className="btn primary" type="submit">
+              Guardar
+            </button>
+            <button className="btn" type="button" onClick={testMail}>
+              Probar correo
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <h2>WhatsApp (Evolution)</h2>
+          <span className={`chip ${waState === 'open' || waState === 'connected' ? 'ok' : 'warn'}`}>
+            {waState || 'disconnected'}
+          </span>
+        </div>
+        <div className="composer">
+          <p className="lead">
+            {s?.evolutionReady
+              ? 'Cada empresa crea su propia instancia en la red Renace.'
+              : 'Evolution API no está configurada en el servidor.'}
+          </p>
+          <div className="quick-actions">
+            <button className="btn primary" type="button" onClick={connectWa} disabled={!s?.evolutionReady}>
+              Conectar / ver QR
+            </button>
+            <button className="btn" type="button" onClick={refreshWa}>
+              Actualizar estado
+            </button>
+          </div>
+          {qr && (
+            <div style={{ marginTop: '1rem' }}>
+              <img
+                src={qr.startsWith('data:') ? qr : `data:image/png;base64,${qr}`}
+                alt="QR WhatsApp"
+                style={{ width: 240, height: 240, borderRadius: 12, border: '1px solid var(--line)' }}
+              />
+            </div>
+          )}
+          <div className="row-actions" style={{ marginTop: '1rem' }}>
+            <div className="field">
+              <label>Teléfono prueba (1XXXXXXXXXX)</label>
+              <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="18095551234" />
+            </div>
+            <button className="btn accent" type="button" onClick={testWa} disabled={!phone}>
+              Enviar prueba
+            </button>
+          </div>
+        </div>
+      </section>
+    </>
+  );
+}
+
 export default function App() {
   const { user, setUser, loading } = useAuth();
   const navigate = useNavigate();
+  const loc = useLocation();
 
   if (loading) return <div className="login-wrap">Cargando…</div>;
+
   if (!user) {
-    return (
-      <Login
-        onLogin={(u) => {
-          setUser(u);
-          navigate('/');
-        }}
-      />
-    );
+    const onLogin = (u: User) => {
+      setUser(u);
+      navigate('/');
+    };
+    if (loc.pathname === '/registro') return <Registro onLogin={onLogin} />;
+    return <Login onLogin={onLogin} />;
   }
 
   return (
@@ -1119,8 +1588,10 @@ export default function App() {
         <Route path="/empleados" element={<Empleados />} />
         <Route path="/contratos" element={<Contratos />} />
         <Route path="/lotes" element={<Lotes />} />
+        <Route path="/reportes" element={<Reportes />} />
         <Route path="/cuaderno" element={<Cuaderno />} />
         <Route path="/terminales" element={<Terminales />} />
+        <Route path="/ajustes" element={<Ajustes />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Shell>

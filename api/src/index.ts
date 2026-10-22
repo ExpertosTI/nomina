@@ -7,6 +7,8 @@ import { devicesRouter } from './routes/devices.js';
 import { attendanceRouter } from './routes/attendance.js';
 import { payrollRouter } from './routes/payroll.js';
 import { noveltiesRouter } from './routes/novelties.js';
+import { settingsRouter } from './routes/settings.js';
+import { reportsRouter } from './routes/reports.js';
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -37,6 +39,8 @@ app.use('/api/devices', devicesRouter);
 app.use('/api/attendance', attendanceRouter);
 app.use('/api/payroll', payrollRouter);
 app.use('/api/novelties', noveltiesRouter);
+app.use('/api/settings', settingsRouter);
+app.use('/api/reports', reportsRouter);
 
 // Hikvision ACK path also mounted under /api for internal forward
 app.use('/api', attendanceRouter);
