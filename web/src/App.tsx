@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { api, getToken, setToken } from './api';
+import { detectLocalIpv4, scanSubnet, subnetPrefix, type LanHost } from './lanScan';
 
 type User = { id: string; email: string; name: string; role: string; companyId: string };
 type Employee = {
@@ -1126,11 +1127,58 @@ function Terminales() {
     password: '',
   });
   const [msg, setMsg] = useState('');
+  const [localIp, setLocalIp] = useState('');
+  const [prefix, setPrefix] = useState('192.168.1');
+  const [scanning, setScanning] = useState(false);
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
+  const [hosts, setHosts] = useState<LanHost[]>([]);
 
   const load = () => api<Device[]>('/api/devices').then(setRows).catch(console.error);
   useEffect(() => {
     load();
   }, []);
+
+  async function detectLan() {
+    setMsg('Detectando tu IP local…');
+    const ip = await detectLocalIpv4();
+    if (!ip) {
+      setMsg('No se pudo detectar la LAN. Escribe el prefijo manual (ej. 192.168.1)');
+      return;
+    }
+    setLocalIp(ip);
+    const p = subnetPrefix(ip);
+    if (p) setPrefix(p);
+    setMsg(`Red local detectada: ${ip} → escaneando ${p}.x`);
+  }
+
+  async function runScan() {
+    if (!prefix.trim()) {
+      setMsg('Indica el prefijo de red (ej. 192.168.1)');
+      return;
+    }
+    setScanning(true);
+    setHosts([]);
+    setProgress({ done: 0, total: 254 });
+    setMsg('Escaneando red local desde este navegador (misma WiFi que la terminal)…');
+    try {
+      const found = await scanSubnet(prefix.trim(), {
+        onProgress: (done, total) => setProgress({ done, total }),
+      });
+      setHosts(found);
+      setMsg(
+        found.length
+          ? `Encontrados ${found.length} host(s) en ${prefix}.0/24. Elige uno para rellenar la IP.`
+          : 'Ningún host respondió. Confirma que este PC está en la misma red que el Hikvision.',
+      );
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  function pickHost(ip: string) {
+    setForm((f) => ({ ...f, ipAddress: ip, name: f.name || `Hikvision ${ip}` }));
+    setMsg(`IP ${ip} cargada. Completa usuario/clave y registra el terminal.`);
+  }
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
@@ -1138,6 +1186,7 @@ function Terminales() {
       method: 'POST',
       body: JSON.stringify({ ...form, port: Number(form.port) }),
     });
+    setMsg('Terminal registrado. Copia la Push URL al HTTP Listening del equipo.');
     load();
   }
 
@@ -1155,14 +1204,99 @@ function Terminales() {
   return (
     <>
       <h1 className="page-title">Terminales Hikvision</h1>
-      <p className="lead">Copia la Push URL en HTTP Listening del DS-K1T321EFWX.</p>
+      <p className="lead">
+        Aquí se escanea y registra la terminal. Abre Nomina desde un PC en la misma red WiFi/LAN que el
+        DS-K1T321EFWX, busca la IP, regístrala y pega la Push URL en el equipo.
+      </p>
       {msg && <p className="lead">{msg}</p>}
+
       <section className="panel">
+        <div className="panel-head">
+          <h2>Búsqueda local</h2>
+          {scanning && (
+            <span className="chip teal">
+              {progress.done}/{progress.total}
+            </span>
+          )}
+        </div>
+        <div className="composer">
+          <div className="quick-steps" style={{ marginBottom: '0.85rem' }}>
+            <div className="quick-title">En esta red</div>
+            <p className="lead" style={{ marginBottom: '0.5rem' }}>
+              El escaneo corre en tu navegador (no en el servidor). Ideal cuando estás junto a la
+              terminal.
+              {localIp ? ` Tu IP: ${localIp}` : ''}
+            </p>
+            <div className="quick-actions">
+              <button className="btn" type="button" onClick={detectLan} disabled={scanning}>
+                Detectar mi red
+              </button>
+              <button className="btn primary" type="button" onClick={runScan} disabled={scanning}>
+                {scanning ? 'Escaneando…' : 'Escanear red local'}
+              </button>
+            </div>
+          </div>
+          <div className="row-actions">
+            <div className="field">
+              <label>Prefijo LAN (ej. 192.168.1)</label>
+              <input value={prefix} onChange={(e) => setPrefix(e.target.value)} placeholder="192.168.1" />
+            </div>
+          </div>
+          {hosts.length > 0 && (
+            <table>
+              <thead>
+                <tr>
+                  <th>IP encontrada</th>
+                  <th>Latencia</th>
+                  <th>Nota</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {hosts.map((h) => (
+                  <tr key={h.ip}>
+                    <td>
+                      <strong>{h.ip}</strong>
+                    </td>
+                    <td>{h.ms} ms</td>
+                    <td>
+                      <span className={`chip ${h.likelyHikvision ? 'ok' : 'muted'}`}>
+                        {h.likelyHikvision ? 'posible terminal' : 'host activo'}
+                      </span>
+                    </td>
+                    <td>
+                      <button className="btn accent" type="button" onClick={() => pickHost(h.ip)}>
+                        Usar esta IP
+                      </button>
+                      <a
+                        className="btn"
+                        href={`http://${h.ip}/`}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ marginLeft: 6 }}
+                      >
+                        Abrir
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <h2>Registrar terminal</h2>
+        </div>
         <form className="composer" onSubmit={create}>
           <div className="row-actions">
             {(['name', 'ipAddress', 'port', 'username', 'password'] as const).map((k) => (
               <div className="field" key={k}>
-                <label>{k}</label>
+                <label>
+                  {k === 'ipAddress' ? 'IP (de la búsqueda local)' : k === 'name' ? 'Nombre' : k}
+                </label>
                 <input
                   value={form[k]}
                   onChange={(e) => setForm({ ...form, [k]: e.target.value })}
@@ -1177,9 +1311,10 @@ function Terminales() {
           </button>
         </form>
       </section>
+
       <section className="panel">
         <div className="panel-head">
-          <h2>Dispositivos</h2>
+          <h2>Dispositivos registrados</h2>
         </div>
         <table>
           <thead>
@@ -1187,7 +1322,7 @@ function Terminales() {
               <th>Nombre</th>
               <th>IP</th>
               <th>Estado</th>
-              <th>Push URL</th>
+              <th>Push URL (pegar en la terminal)</th>
               <th />
             </tr>
           </thead>
@@ -1206,7 +1341,7 @@ function Terminales() {
                 </td>
                 <td>
                   <button className="btn" type="button" onClick={() => probe(String(d.id))}>
-                    Verificar conexión
+                    Verificar
                   </button>
                 </td>
               </tr>
