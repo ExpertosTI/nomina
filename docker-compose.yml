@@ -1,0 +1,198 @@
+# ── Nomina · Renace — Docker Swarm + Traefik (RenaceNet) ──
+#  Stack:  nomina
+#  Domain: nomina.renace.tech
+#  Repo:   https://github.com/ExpertosTI/nomina
+#  Network: RenaceNet (external overlay)
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nomina}
+      POSTGRES_USER: ${POSTGRES_USER:-nomina}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - nomina_pg:/var/lib/postgresql/data
+    networks:
+      - RenaceNet
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  api:
+    image: nomina-api:latest
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-nomina}:${POSTGRES_PASSWORD}@nomina_db:5432/${POSTGRES_DB:-nomina}?schema=public
+      PORT: 3000
+      JWT_SECRET: ${JWT_SECRET}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-info@renace.tech}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      COMPANY_NAME: ${COMPANY_NAME:-Renace Tech}
+      PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:-https://nomina.renace.tech}
+      LISTENER_FORWARD_SECRET: ${LISTENER_FORWARD_SECRET}
+      TZ: ${TZ:-America/Santo_Domingo}
+      RUN_SEED: "1"
+    networks:
+      - RenaceNet
+    depends_on:
+      - db
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 8s
+      update_config:
+        order: start-first
+        parallelism: 1
+        failure_action: rollback
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 768M
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=RenaceNet
+        - traefik.constraint-label=traefik-public
+
+        - traefik.http.routers.nomina-api-http.rule=Host(`nomina.renace.tech`) && PathPrefix(`/api`)
+        - traefik.http.routers.nomina-api-http.entrypoints=web
+        - traefik.http.routers.nomina-api-http.middlewares=nomina-redirect-https
+
+        - traefik.http.routers.nomina-api.rule=Host(`nomina.renace.tech`) && PathPrefix(`/api`)
+        - traefik.http.routers.nomina-api.entrypoints=websecure
+        - traefik.http.routers.nomina-api.tls=true
+        - traefik.http.routers.nomina-api.tls.certresolver=letsencryptresolver
+        - traefik.http.routers.nomina-api.service=nomina-api-svc
+        - traefik.http.routers.nomina-api.priority=20
+
+        - traefik.http.services.nomina-api-svc.loadbalancer.server.port=3000
+        - traefik.http.services.nomina-api-svc.loadbalancer.healthcheck.path=/api/health
+
+        - traefik.http.middlewares.nomina-redirect-https.redirectscheme.scheme=https
+        - traefik.http.middlewares.nomina-redirect-https.redirectscheme.permanent=true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  hikvision:
+    image: nomina-hikvision:latest
+    build:
+      context: ./listener
+      dockerfile: Dockerfile
+    environment:
+      PORT: 9095
+      API_INTERNAL_URL: http://nomina_api:3000
+      LISTENER_FORWARD_SECRET: ${LISTENER_FORWARD_SECRET}
+      TZ: ${TZ:-America/Santo_Domingo}
+    networks:
+      - RenaceNet
+    depends_on:
+      - api
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=RenaceNet
+        - traefik.constraint-label=traefik-public
+
+        - traefik.http.routers.nomina-hik-http.rule=Host(`nomina.renace.tech`) && PathPrefix(`/hikvision`)
+        - traefik.http.routers.nomina-hik-http.entrypoints=web
+        - traefik.http.routers.nomina-hik-http.middlewares=nomina-redirect-https
+
+        - traefik.http.routers.nomina-hik.rule=Host(`nomina.renace.tech`) && PathPrefix(`/hikvision`)
+        - traefik.http.routers.nomina-hik.entrypoints=websecure
+        - traefik.http.routers.nomina-hik.tls=true
+        - traefik.http.routers.nomina-hik.tls.certresolver=letsencryptresolver
+        - traefik.http.routers.nomina-hik.service=nomina-hik-svc
+        - traefik.http.routers.nomina-hik.priority=30
+
+        - traefik.http.services.nomina-hik-svc.loadbalancer.server.port=9095
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  web:
+    image: nomina-web:latest
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    networks:
+      - RenaceNet
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      update_config:
+        order: start-first
+        parallelism: 1
+        failure_action: rollback
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=RenaceNet
+        - traefik.constraint-label=traefik-public
+
+        - traefik.http.routers.nomina-web-http.rule=Host(`nomina.renace.tech`)
+        - traefik.http.routers.nomina-web-http.entrypoints=web
+        - traefik.http.routers.nomina-web-http.middlewares=nomina-redirect-https
+
+        - traefik.http.routers.nomina-web.rule=Host(`nomina.renace.tech`)
+        - traefik.http.routers.nomina-web.entrypoints=websecure
+        - traefik.http.routers.nomina-web.tls=true
+        - traefik.http.routers.nomina-web.tls.certresolver=letsencryptresolver
+        - traefik.http.routers.nomina-web.service=nomina-web-svc
+        - traefik.http.routers.nomina-web.middlewares=nomina-security
+        - traefik.http.routers.nomina-web.priority=10
+
+        - traefik.http.services.nomina-web-svc.loadbalancer.server.port=80
+        - traefik.http.services.nomina-web-svc.loadbalancer.healthcheck.path=/healthz
+
+        - traefik.http.middlewares.nomina-security.headers.stsSeconds=31536000
+        - traefik.http.middlewares.nomina-security.headers.stsIncludeSubdomains=true
+        - traefik.http.middlewares.nomina-security.headers.contentTypeNosniff=true
+        - traefik.http.middlewares.nomina-security.headers.browserXssFilter=true
+        - traefik.http.middlewares.nomina-security.headers.referrerPolicy=strict-origin-when-cross-origin
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  nomina_pg:
+
+networks:
+  RenaceNet:
+    external: true

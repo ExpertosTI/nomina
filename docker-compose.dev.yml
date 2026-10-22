@@ -1,0 +1,14 @@
+services:
+  db:
+    image: postgres:16-alpine
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: nomina
+      POSTGRES_USER: nomina
+      POSTGRES_PASSWORD: nomina_dev
+    volumes:
+      - nomina_pg_dev:/var/lib/postgresql/data
+
+volumes:
+  nomina_pg_dev:
