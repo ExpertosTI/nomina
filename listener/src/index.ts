@@ -25,7 +25,8 @@ app.get(['/', '/hikvision/event', '/ISAPI/Event/notification/httpHosts', '/healt
 app.post(['/hikvision/event', '/ISAPI/Event/notification/alertStream', '/'], async (req, res) => {
   const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
   const contentType = req.headers['content-type'] || 'application/octet-stream';
-  const body = Buffer.isBuffer(req.body) ? req.body : Buffer.from('');
+  const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from('');
+  const body = new Uint8Array(raw);
 
   try {
     const forward = await fetch(`${apiUrl}/api/hikvision/event${qs}`, {
