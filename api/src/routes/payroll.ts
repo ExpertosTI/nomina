@@ -121,14 +121,101 @@ payrollRouter.post('/runs', async (req, res) => {
 });
 
 payrollRouter.get('/payslips', async (req, res) => {
+  const runId = req.query.runId ? String(req.query.runId) : undefined;
   res.json(
     await prisma.payslip.findMany({
-      where: { employee: { companyId: req.user!.companyId } },
-      include: { employee: true, run: true },
+      where: {
+        employee: { companyId: req.user!.companyId },
+        ...(runId ? { runId } : {}),
+      },
+      include: { employee: true, run: true, contract: true },
       orderBy: { createdAt: 'desc' },
-      take: 100,
+      take: 200,
     }),
   );
+});
+
+payrollRouter.get('/payslips/:id', async (req, res) => {
+  const row = await prisma.payslip.findFirst({
+    where: { id: req.params.id, employee: { companyId: req.user!.companyId } },
+    include: { employee: true, run: true, contract: true, structure: true },
+  });
+  if (!row) return res.status(404).json({ error: 'No encontrado' });
+  res.json(row);
+});
+
+payrollRouter.post('/payslips/:id/confirm', async (req, res) => {
+  const existing = await prisma.payslip.findFirst({
+    where: { id: req.params.id, employee: { companyId: req.user!.companyId } },
+  });
+  if (!existing) return res.status(404).json({ error: 'No encontrado' });
+  if (existing.state !== 'draft') return res.status(400).json({ error: 'Solo borrador se confirma' });
+  res.json(await prisma.payslip.update({ where: { id: existing.id }, data: { state: 'done' } }));
+});
+
+payrollRouter.post('/payslips/:id/paid', async (req, res) => {
+  const existing = await prisma.payslip.findFirst({
+    where: { id: req.params.id, employee: { companyId: req.user!.companyId } },
+  });
+  if (!existing) return res.status(404).json({ error: 'No encontrado' });
+  if (existing.state !== 'done') return res.status(400).json({ error: 'Confirma la nómina primero' });
+  res.json(await prisma.payslip.update({ where: { id: existing.id }, data: { state: 'paid' } }));
+});
+
+payrollRouter.post('/runs/:id/close', async (req, res) => {
+  const run = await prisma.payslipRun.findFirst({
+    where: { id: req.params.id, companyId: req.user!.companyId },
+  });
+  if (!run) return res.status(404).json({ error: 'Lote no encontrado' });
+  await prisma.payslip.updateMany({
+    where: { runId: run.id, state: 'draft' },
+    data: { state: 'done' },
+  });
+  res.json(await prisma.payslipRun.update({ where: { id: run.id }, data: { state: 'close' } }));
+});
+
+payrollRouter.post('/runs/:id/draft', async (req, res) => {
+  const run = await prisma.payslipRun.findFirst({
+    where: { id: req.params.id, companyId: req.user!.companyId },
+  });
+  if (!run) return res.status(404).json({ error: 'Lote no encontrado' });
+  res.json(await prisma.payslipRun.update({ where: { id: run.id }, data: { state: 'draft' } }));
+});
+
+payrollRouter.post('/runs/:id/generate', async (req, res) => {
+  const run = await prisma.payslipRun.findFirst({
+    where: { id: req.params.id, companyId: req.user!.companyId },
+  });
+  if (!run) return res.status(404).json({ error: 'Lote no encontrado' });
+  if (run.state !== 'draft') return res.status(400).json({ error: 'Lote cerrado' });
+
+  const existing = await prisma.payslip.findMany({ where: { runId: run.id }, select: { employeeId: true } });
+  const have = new Set(existing.map((p) => p.employeeId));
+  const employeeIds = (req.body?.employeeIds as string[] | undefined) || undefined;
+
+  const contracts = await prisma.contract.findMany({
+    where: {
+      companyId: req.user!.companyId,
+      state: 'open',
+      ...(employeeIds?.length ? { employeeId: { in: employeeIds } } : {}),
+    },
+  });
+
+  const payslips = [];
+  for (const c of contracts) {
+    if (have.has(c.employeeId)) continue;
+    payslips.push(
+      await computePayslip({
+        companyId: req.user!.companyId,
+        employeeId: c.employeeId,
+        contractId: c.id,
+        runId: run.id,
+        dateFrom: run.dateStart,
+        dateTo: run.dateEnd,
+      }),
+    );
+  }
+  res.status(201).json({ run, payslips, created: payslips.length });
 });
 
 payrollRouter.get('/dashboard', async (req, res) => {
