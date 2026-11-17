@@ -12,6 +12,19 @@ async function ingestEvent(opts: {
   contentType?: string;
 }) {
   const parsed = parseHikvisionPush(opts.body, opts.contentType);
+
+  if (opts.deviceId) {
+    await prisma.device.updateMany({
+      where: { id: opts.deviceId },
+      data: { lastSync: new Date(), lastStatus: 'online' },
+    });
+  }
+
+  // Filtrar heartbeats / keepalive sin usuario: solo mantienen el equipo online
+  if (!parsed.isValidAttendance || !parsed.employeeNo || parsed.employeeNo === 'N/A') {
+    return { id: 'heartbeat', ok: true };
+  }
+
   let employee = await prisma.employee.findFirst({
     where: {
       companyId: opts.companyId,
@@ -22,10 +35,17 @@ async function ingestEvent(opts: {
     },
   });
 
-  if (opts.deviceId) {
-    await prisma.device.updateMany({
-      where: { id: opts.deviceId },
-      data: { lastSync: new Date(), lastStatus: 'online' },
+  // Si el empleado no existe en la BD de nómina, auto-crearlo para no perder la marcación
+  if (!employee && parsed.employeeNo) {
+    employee = await prisma.employee.create({
+      data: {
+        companyId: opts.companyId,
+        code: parsed.employeeNo,
+        name: parsed.employeeName !== 'Desconocido' ? parsed.employeeName : `Empleado ${parsed.employeeNo}`,
+        biometricPin: parsed.employeeNo,
+        department: 'General',
+        active: true,
+      },
     });
   }
 
@@ -40,7 +60,7 @@ async function ingestEvent(opts: {
       major: parsed.major,
       minor: parsed.minor,
       verifyMode: parsed.verifyMode,
-      isValidAttendance: parsed.isValidAttendance,
+      isValidAttendance: true,
       raw: parsed.raw as object,
     },
   });

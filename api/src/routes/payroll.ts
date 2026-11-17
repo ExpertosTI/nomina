@@ -69,6 +69,77 @@ payrollRouter.post('/contracts', async (req, res) => {
   res.status(201).json(row);
 });
 
+payrollRouter.patch('/contracts/:id', async (req, res) => {
+  const existing = await prisma.contract.findFirst({
+    where: { id: req.params.id, companyId: req.user!.companyId },
+  });
+  if (!existing) return res.status(404).json({ error: 'Contrato no encontrado' });
+  const b = req.body || {};
+  const updated = await prisma.contract.update({
+    where: { id: existing.id },
+    data: {
+      ...(b.wage != null ? { wage: Number(b.wage) } : {}),
+      ...(b.name ? { name: String(b.name) } : {}),
+      ...(b.state ? { state: String(b.state) } : {}),
+      ...(b.structureId !== undefined ? { structureId: b.structureId || null } : {}),
+      ...(b.dateStart ? { dateStart: new Date(b.dateStart) } : {}),
+      ...(b.dateEnd !== undefined ? { dateEnd: b.dateEnd ? new Date(b.dateEnd) : null } : {}),
+    },
+    include: { employee: true, structure: true },
+  });
+  res.json(updated);
+});
+
+payrollRouter.delete('/contracts/:id', async (req, res) => {
+  const existing = await prisma.contract.findFirst({
+    where: { id: req.params.id, companyId: req.user!.companyId },
+  });
+  if (!existing) return res.status(404).json({ error: 'Contrato no encontrado' });
+  await prisma.contract.delete({ where: { id: existing.id } });
+  res.json({ ok: true, message: 'Contrato eliminado' });
+});
+
+payrollRouter.post('/contracts/auto-generate', async (req, res) => {
+  const defaultWage = Number(req.body?.wage || 25000);
+  const structure = await prisma.salaryStructure.findFirst({
+    where: { companyId: req.user!.companyId, code: 'STD' },
+  });
+  const employeesWithoutContract = await prisma.employee.findMany({
+    where: {
+      companyId: req.user!.companyId,
+      active: true,
+      contracts: { none: { state: 'open' } },
+    },
+  });
+
+  const created = [];
+  for (const emp of employeesWithoutContract) {
+    const c = await prisma.contract.create({
+      data: {
+        companyId: req.user!.companyId,
+        employeeId: emp.id,
+        name: `Contrato ${emp.name}`,
+        wage: defaultWage,
+        structureId: structure?.id || null,
+        dateStart: new Date(),
+        state: 'open',
+      },
+    });
+    created.push(c);
+  }
+  res.json({ count: created.length, contracts: created });
+});
+
+payrollRouter.delete('/runs/:id', async (req, res) => {
+  const run = await prisma.payslipRun.findFirst({
+    where: { id: req.params.id, companyId: req.user!.companyId },
+  });
+  if (!run) return res.status(404).json({ error: 'Lote no encontrado' });
+  await prisma.payslip.deleteMany({ where: { runId: run.id } });
+  await prisma.payslipRun.delete({ where: { id: run.id } });
+  res.json({ ok: true, message: 'Lote eliminado' });
+});
+
 payrollRouter.get('/runs', async (req, res) => {
   res.json(
     await prisma.payslipRun.findMany({

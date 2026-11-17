@@ -528,6 +528,34 @@ function Empleados() {
     load();
   }
 
+  async function editEmployee(emp: Employee) {
+    const newName = window.prompt('Nombre completo:', emp.name);
+    if (newName === null) return;
+    const newJob = window.prompt('Puesto / Cargo:', emp.jobTitle || '');
+    if (newJob === null) return;
+    const newDept = window.prompt('Departamento:', emp.department || '');
+    if (newDept === null) return;
+    try {
+      await api(`/api/employees/${emp.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name: newName || emp.name, jobTitle: newJob, department: newDept }),
+      });
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Error al editar');
+    }
+  }
+
+  async function deleteEmployee(id: string) {
+    if (!window.confirm('¿Seguro que deseas eliminar este empleado? Se eliminarán también sus contratos.')) return;
+    try {
+      await api(`/api/employees/${id}`, { method: 'DELETE' });
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Error al eliminar');
+    }
+  }
+
   return (
     <>
       <h1 className="page-title">Empleados</h1>
@@ -582,6 +610,7 @@ function Empleados() {
               <th>Puesto</th>
               <th>Depto</th>
               <th>PIN</th>
+              <th>Acciones</th>
             </tr>
           </thead>
           <tbody>
@@ -592,6 +621,21 @@ function Empleados() {
                 <td>{e.jobTitle || '—'}</td>
                 <td>{e.department || '—'}</td>
                 <td>{e.biometricPin || e.code}</td>
+                <td>
+                  <div className="quick-actions">
+                    <button className="btn" type="button" onClick={() => editEmployee(e)}>
+                      Editar
+                    </button>
+                    <button
+                      className="btn"
+                      style={{ color: '#e53e3e', borderColor: '#feb2b2' }}
+                      type="button"
+                      onClick={() => deleteEmployee(e.id)}
+                    >
+                      Eliminar
+                    </button>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -635,6 +679,46 @@ function Contratos() {
     load();
   }
 
+  async function editWage(c: Contract) {
+    const val = window.prompt(`Nuevo salario mensual (DOP) para ${c.employee?.name || c.name}:`, String(c.wage));
+    if (!val) return;
+    const num = Number(val);
+    if (isNaN(num) || num <= 0) return alert('Salario inválido');
+    try {
+      await api(`/api/payroll/contracts/${c.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ wage: num }),
+      });
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Error al actualizar');
+    }
+  }
+
+  async function deleteContract(id: string) {
+    if (!window.confirm('¿Seguro que deseas eliminar este contrato?')) return;
+    try {
+      await api(`/api/payroll/contracts/${id}`, { method: 'DELETE' });
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Error al eliminar');
+    }
+  }
+
+  async function autoGenerate() {
+    if (!window.confirm('¿Crear contratos estándar (RD$25,000) a todos los empleados que aún no tienen contrato?')) return;
+    try {
+      const res = await api<{ count: number }>('/api/payroll/contracts/auto-generate', {
+        method: 'POST',
+        body: JSON.stringify({ wage: 25000 }),
+      });
+      alert(`Se crearon ${res.count} contrato(s) exitosamente.`);
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Error');
+    }
+  }
+
   return (
     <>
       <h1 className="page-title">Contratos</h1>
@@ -642,6 +726,9 @@ function Contratos() {
       <section className="panel">
         <div className="panel-head">
           <h2>Nuevo contrato</h2>
+          <button className="btn accent" type="button" onClick={autoGenerate}>
+            + Contratos automáticos a todos
+          </button>
         </div>
         <form className="composer" onSubmit={create}>
           <div className="row-actions">
@@ -697,6 +784,7 @@ function Contratos() {
       <section className="panel">
         <div className="panel-head">
           <h2>Contratos abiertos</h2>
+          <span className="chip muted">{rows.length}</span>
         </div>
         <table>
           <thead>
@@ -706,6 +794,7 @@ function Contratos() {
               <th>Salario</th>
               <th>Estructura</th>
               <th>Estado</th>
+              <th>Acciones</th>
             </tr>
           </thead>
           <tbody>
@@ -713,10 +802,25 @@ function Contratos() {
               <tr key={c.id}>
                 <td>{c.employee?.name}</td>
                 <td>{c.name}</td>
-                <td>{money(c.wage)}</td>
-                <td>{c.structure?.code || '—'}</td>
+                <td><strong>{money(c.wage)}</strong></td>
+                <td>{c.structure?.code || 'STD'}</td>
                 <td>
                   <span className={`chip ${stateChip(c.state)}`}>{c.state}</span>
+                </td>
+                <td>
+                  <div className="quick-actions">
+                    <button className="btn" type="button" onClick={() => editWage(c)}>
+                      Editar salario
+                    </button>
+                    <button
+                      className="btn"
+                      style={{ color: '#e53e3e', borderColor: '#feb2b2' }}
+                      type="button"
+                      onClick={() => deleteContract(c.id)}
+                    >
+                      Eliminar
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -795,6 +899,18 @@ function Lotes() {
     await api(`/api/payroll/runs/${id}/close`, { method: 'POST', body: '{}' });
     setMsg('Lote cerrado · payslips confirmados');
     await load();
+  }
+
+  async function deleteRun(id: string) {
+    if (!window.confirm('¿Seguro que deseas eliminar este lote de nómina y todos sus recibos?')) return;
+    try {
+      await api(`/api/payroll/runs/${id}`, { method: 'DELETE' });
+      if (selected === id) setSelected(null);
+      setMsg('Lote eliminado');
+      await load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Error al eliminar');
+    }
   }
 
   async function confirmSlip(id: string) {
@@ -886,6 +1002,14 @@ function Lotes() {
                     )}
                     <button className="btn" type="button" onClick={() => setSelected(r.id)}>
                       Ver nóminas
+                    </button>
+                    <button
+                      className="btn"
+                      style={{ color: '#e53e3e', borderColor: '#feb2b2' }}
+                      type="button"
+                      onClick={() => deleteRun(r.id)}
+                    >
+                      Eliminar lote
                     </button>
                   </div>
                 </td>
@@ -1190,6 +1314,17 @@ function Terminales() {
     load();
   }
 
+  async function deleteDevice(id: string) {
+    if (!window.confirm('¿Seguro que deseas eliminar este terminal?')) return;
+    try {
+      await api(`/api/devices/${id}`, { method: 'DELETE' });
+      setMsg('Terminal eliminado');
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Error al eliminar');
+    }
+  }
+
   async function probe(id: string) {
     setMsg('Verificando conexión ISAPI…');
     try {
@@ -1340,9 +1475,19 @@ function Terminales() {
                   {String(d.pushUrl || '')}
                 </td>
                 <td>
-                  <button className="btn" type="button" onClick={() => probe(String(d.id))}>
-                    Verificar
-                  </button>
+                  <div className="quick-actions">
+                    <button className="btn" type="button" onClick={() => probe(String(d.id))}>
+                      Verificar
+                    </button>
+                    <button
+                      className="btn"
+                      style={{ color: '#e53e3e', borderColor: '#feb2b2' }}
+                      type="button"
+                      onClick={() => deleteDevice(String(d.id))}
+                    >
+                      Eliminar
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

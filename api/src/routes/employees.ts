@@ -56,3 +56,12 @@ employeesRouter.patch('/:id', async (req, res) => {
   if (!row.count) return res.status(404).json({ error: 'No encontrado' });
   res.json(await prisma.employee.findUnique({ where: { id: req.params.id } }));
 });
+
+employeesRouter.delete('/:id', async (req, res) => {
+  const existing = await prisma.employee.findFirst({
+    where: { id: req.params.id, companyId: req.user!.companyId },
+  });
+  if (!existing) return res.status(404).json({ error: 'Empleado no encontrado' });
+  await prisma.employee.delete({ where: { id: existing.id } });
+  res.json({ ok: true, message: 'Empleado eliminado' });
+});
